@@ -103,12 +103,28 @@ def montar_resumo_os(os_item):
 
 
 class OrdemServicoApp:
+    # Ordem "natural" do fluxo de atendimento, usada tanto no combobox de Situação
+    # quanto na ordenação por fluxo da coluna Situação na tela inicial.
+    SITUACOES_FLUXO = [
+        "Aguardando autorização do orçamento",
+        "Em reparo",
+        "Pronto",
+        "Sem reparo",
+        "Encerrada",
+        "Cancelada",
+    ]
+
     def __init__(self):
         self.ordens = self.carregar_dados(ARQUIVO_OS)
         self.clientes = self.carregar_dados(ARQUIVO_CLIENTES)
         self.os_atual = self.criar_nova_os()
         self.tecnicos = self.carregar_tecnicos()
-        
+        self.filtro_inicial_atual = ""
+        # Ciclo de ordenação da coluna "Situação": 0=fluxo ↑, 1=fluxo ↓, 2=A-Z, 3=Z-A
+        # Começa em -1 para que o primeiro clique caia no modo 0 (fluxo crescente),
+        # do mesmo jeito que o primeiro clique nas outras colunas começa em ordem crescente.
+        self.situacao_modo_ordenacao = -1
+
         self.root = tk.Tk()
         self.root.title("Ordem de Serviço - Assistência Técnica")
         self.root.geometry("1400x820")
@@ -155,9 +171,11 @@ class OrdemServicoApp:
 
         colunas = ["OS", "Cliente", "CPF", "Situação", "Entrada", "Saída"]
         self.tree_inicial = ttk.Treeview(frame_lista, columns=colunas, show="headings", height=14)
+        self.ordenacao_inicial = {coluna: False for coluna in colunas}
+        larguras_colunas = {"OS": 110, "Cliente": 260, "CPF": 130, "Situação": 190, "Entrada": 130, "Saída": 130}
         for coluna in colunas:
-            largura = 120 if coluna != "Cliente" else 260
-            self.tree_inicial.heading(coluna, text=coluna)
+            largura = larguras_colunas.get(coluna, 130)
+            self.tree_inicial.heading(coluna, text=coluna, command=lambda c=coluna: self.ordenar_coluna_inicial(c))
             self.tree_inicial.column(coluna, width=largura, anchor="w")
 
         scrollbar = ttk.Scrollbar(frame_lista, orient="vertical", command=self.tree_inicial.yview)
@@ -165,7 +183,7 @@ class OrdemServicoApp:
         self.tree_inicial.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
-        self.tree_inicial.bind("<Double-1>", self.carregar_os_selecionada_inicial)
+        self.tree_inicial.bind("<Double-1>", self.on_tree_duplo_clique)
 
         botoes = tk.Frame(self.inicio_frame, bg="#f0f0f0")
         botoes.pack(pady=10)
@@ -175,6 +193,8 @@ class OrdemServicoApp:
         tk.Button(botoes, text="Sair", bg="#f44336", fg="white", font=("Arial", 12, "bold"), width=18, command=self.sair).pack(side="left", padx=8)
 
         self.atualizar_lista_inicial()
+        # Mostra a seta indicando que a lista inicia ordenada por O.S. (mais recente primeiro)
+        self._atualizar_cabecalhos_ordenacao("OS")
 
     def abrir_tela_os(self):
         self.inicio_frame.pack_forget()
@@ -189,8 +209,16 @@ class OrdemServicoApp:
         for item in self.tree_inicial.get_children():
             self.tree_inicial.delete(item)
 
-        ordens = resultados if resultados is not None else self.ordens
-        for os_item in sorted(ordens, key=lambda item: item.get("id", 0), reverse=True):
+        # Quando 'resultados' já vem pronto (de uma busca ou de um clique no cabeçalho
+        # de ordenação), a ordem dele deve ser respeitada. Antes, esta função reordenava
+        # tudo por ID de novo aqui dentro, o que anulava qualquer ordenação escolhida
+        # pelo usuário — por isso clicar no cabeçalho parecia não fazer nada.
+        if resultados is not None:
+            ordens = resultados
+        else:
+            ordens = sorted(self.ordens, key=lambda item: item.get("id", 0), reverse=True)
+
+        for os_item in ordens:
             cliente = os_item.get("cliente", {}) or {}
             cpf = str(cliente.get("cpf", ""))
             cpf_formatado = cpf if cpf else "-"
@@ -207,8 +235,84 @@ class OrdemServicoApp:
                 )
             )
 
+    def ordenar_coluna_inicial(self, coluna):
+        # Respeita o filtro de busca atualmente aplicado na tela inicial, em vez de
+        # sempre reordenar a lista completa (o que descartava a busca feita pelo usuário).
+        base = buscar_ordens(self.ordens, self.filtro_inicial_atual)
+
+        if coluna == "Situação":
+            # A coluna Situação alterna entre as duas formas de agrupar pedidas:
+            # 0 = fluxo de atendimento crescente, 1 = fluxo decrescente,
+            # 2 = alfabética A-Z, 3 = alfabética Z-A — depois volta ao início.
+            self.situacao_modo_ordenacao = (self.situacao_modo_ordenacao + 1) % 4
+            modo = self.situacao_modo_ordenacao
+            if modo in (0, 1):
+                ordenado = sorted(base, key=lambda o: self._chave_situacao_fluxo(o.get("situacao", "")), reverse=(modo == 1))
+            else:
+                ordenado = sorted(base, key=lambda o: str(o.get("situacao", "")).lower(), reverse=(modo == 3))
+        else:
+            self.ordenacao_inicial[coluna] = not self.ordenacao_inicial[coluna]
+            reverse = not self.ordenacao_inicial[coluna]
+
+            if coluna == "OS":
+                ordenado = sorted(base, key=lambda o: int(o.get("id", 0)), reverse=reverse)
+            elif coluna == "Cliente":
+                ordenado = sorted(base, key=lambda o: (o.get("cliente", {}) or {}).get("nome", "").lower(), reverse=reverse)
+            elif coluna == "CPF":
+                ordenado = sorted(base, key=lambda o: self._limpar_cpf(str((o.get("cliente", {}) or {}).get("cpf", ""))), reverse=reverse)
+            elif coluna in {"Entrada", "Saída"}:
+                ordenado = sorted(base, key=lambda o: self._parse_data(o.get("data_entrada" if coluna == "Entrada" else "data_saida", "")), reverse=reverse)
+            else:
+                ordenado = base
+
+        self._atualizar_cabecalhos_ordenacao(coluna)
+        self.atualizar_lista_inicial(ordenado)
+
+    def _chave_situacao_fluxo(self, situacao):
+        situacao = situacao or ""
+        try:
+            # Situações conhecidas seguem a posição no fluxo de atendimento.
+            return (0, self.SITUACOES_FLUXO.index(situacao))
+        except ValueError:
+            # Situações não previstas na lista (ex.: digitadas manualmente em O.S. antigas)
+            # vão para o final, ordenadas alfabeticamente entre si.
+            return (1, situacao.lower())
+
+    def _atualizar_cabecalhos_ordenacao(self, coluna_ordenada):
+        rotulos_situacao = {
+            0: "▼ Situação (fluxo)",
+            1: "▲ Situação (fluxo)",
+            2: "▼ Situação (A-Z)",
+            3: "▲ Situação (A-Z)",
+        }
+        for coluna in self.ordenacao_inicial:
+            if coluna == "Situação":
+                texto = rotulos_situacao[self.situacao_modo_ordenacao] if coluna_ordenada == "Situação" else "Situação"
+            else:
+                prefixo = ""
+                if coluna == coluna_ordenada:
+                    # A seta fica no INÍCIO do texto de propósito: se ficasse no final, ela cairia
+                    # perto da borda direita da coluna, onde o Tkinter usa o clique para
+                    # redimensionar em vez de clicar no cabeçalho — por isso o clique "não fazia nada".
+                    prefixo = "▲ " if self.ordenacao_inicial[coluna] else "▼ "
+                texto = prefixo + coluna
+            self.tree_inicial.heading(coluna, text=texto, command=lambda c=coluna: self.ordenar_coluna_inicial(c))
+
+    def _limpar_cpf(self, cpf):
+        return int(''.join(ch for ch in cpf if ch.isdigit())) if cpf and any(ch.isdigit() for ch in cpf) else 0
+
+    def _parse_data(self, data_text):
+        try:
+            return datetime.strptime(data_text, "%d/%m/%Y %H:%M")
+        except Exception:
+            try:
+                return datetime.strptime(data_text, "%d/%m/%Y")
+            except Exception:
+                return datetime.min
+
     def filtrar_os_inicial(self):
         termo = (self.entry_busca_inicial.get() or "").strip()
+        self.filtro_inicial_atual = termo
         if not termo:
             self.atualizar_lista_inicial()
             return
@@ -218,29 +322,45 @@ class OrdemServicoApp:
 
     def limpar_busca_inicial(self):
         self.entry_busca_inicial.delete(0, tk.END)
+        self.filtro_inicial_atual = ""
         self.atualizar_lista_inicial()
 
-    def carregar_os_selecionada_inicial(self, event=None):
+    def ordenar_por_os(self):
+        self.ordenar_coluna_inicial("OS")
+
+    def ordenar_por_cliente(self):
+        self.ordenar_coluna_inicial("Cliente")
+
+    def carregar_os_selecionada_inicial(self, event=None, suppress_warning=False):
         selecionado = self.tree_inicial.selection()
         if not selecionado:
-            messagebox.showwarning("Aviso", "Selecione uma O.S. para carregar.", parent=self.root)
+            if not suppress_warning:
+                messagebox.showwarning("Aviso", "Selecione uma O.S. para carregar.", parent=self.root)
             return
 
         item = self.tree_inicial.item(selecionado[0])
         valores = item.get("values", [])
         if not valores:
+            if not suppress_warning:
+                messagebox.showwarning("Aviso", "Selecione uma O.S. para carregar.", parent=self.root)
             return
 
         try:
             os_id = int(str(valores[0]).zfill(6))
         except Exception:
-            messagebox.showerror("Erro", "Não foi possível identificar a O.S.", parent=self.root)
+            if not suppress_warning:
+                messagebox.showerror("Erro", "Não foi possível identificar a O.S.", parent=self.root)
             return
 
         os_item = next((o for o in self.ordens if o.get("id") == os_id), None)
         if os_item:
             self.carregar_os(os_item)
             self.abrir_tela_os()
+
+    def on_tree_duplo_clique(self, event):
+        region = self.tree_inicial.identify_region(event.x, event.y)
+        if region != "heading":
+            self.carregar_os_selecionada_inicial()
 
     def carregar_dados(self, arquivo):
         if os.path.exists(arquivo):
@@ -324,7 +444,7 @@ class OrdemServicoApp:
         status_frame.pack(fill="x", pady=5, padx=15)
         tk.Label(status_frame, text="Situação da OS:").pack(side="left")
         self.situacao_var = tk.StringVar(value="Aguardando autorização do orçamento")
-        situacoes = ["Aguardando autorização do orçamento", "Em reparo", "Pronto", "Sem reparo", "Encerrada", "Cancelada"]
+        situacoes = self.SITUACOES_FLUXO
         ttk.Combobox(status_frame, textvariable=self.situacao_var, values=situacoes, width=35).pack(side="left", padx=10)
         
         tk.Label(status_frame, text="   Técnico Responsável:").pack(side="left")
@@ -414,172 +534,69 @@ class OrdemServicoApp:
         self.resumo_os_label.config(text=f"{texto}\n{texto2}")
 
     def cadastrar_novo_cliente(self):
-
         win = tk.Toplevel(self.root)
-
         win.title("Cadastrar Novo Cliente")
         win.geometry("500x450")
 
         entries = {}
-
-        campos = [
-            "Nome",
-            "CPF",
-            "Telefone",
-            "Email",
-            "CEP"
-        ]
-
+        campos = ["Nome", "CPF", "Telefone", "Email", "CEP"]
 
         for campo in campos:
-
-            tk.Label(
-                win,
-                text=campo + ":"
-            ).pack(pady=5)
-
-            entries[campo] = tk.Entry(
-                win,
-                width=50
-            )
-
+            tk.Label(win, text=campo + ":").pack(pady=5)
+            entries[campo] = tk.Entry(win, width=50)
             entries[campo].pack()
 
-
-
         def salvar_cliente():
-
             cep = entries["CEP"].get().strip()
-
             endereco = {}
-
             if cep and requests is not None:
-
                 try:
-                    r = requests.get(
-                        f"https://viacep.com.br/ws/{cep}/json/"
-                    )
-
+                    r = requests.get(f"https://viacep.com.br/ws/{cep}/json/")
                     endereco = r.json()
-
                 except Exception:
                     pass
 
-
-
             novo = {
-
                 "id": len(self.clientes) + 1,
-
                 "nome": entries["Nome"].get(),
-
                 "cpf": entries["CPF"].get(),
-
                 "telefone": entries["Telefone"].get(),
-
                 "email": entries["Email"].get(),
-
                 "endereco": endereco
-
             }
 
-
             self.clientes.append(novo)
-
-
-            self.salvar_dados(
-                ARQUIVO_CLIENTES,
-                self.clientes
-            )
-
-
-            messagebox.showinfo(
-                "Sucesso",
-                "Cliente cadastrado!",
-                parent=win
-            )
-
-
+            self.salvar_dados(ARQUIVO_CLIENTES, self.clientes)
+            messagebox.showinfo("Sucesso", "Cliente cadastrado!", parent=win)
             win.destroy()
+            self.combo_cliente["values"] = [c.get("nome", "") for c in self.clientes]
 
-
-            self.combo_cliente["values"] = [
-                c.get("nome", "")
-                for c in self.clientes
-            ]
-
-
-
-        tk.Button(
-            win,
-            text="Salvar Cliente",
-            bg="green",
-            fg="white",
-            command=salvar_cliente
-        ).pack(
-            pady=20
-        )
+        tk.Button(win, text="Salvar Cliente", bg="green", fg="white", command=salvar_cliente).pack(pady=20)
 
     def cadastrar_tecnico(self):
-
         win = tk.Toplevel(self.root)
-
         win.title("Cadastrar Técnico")
         win.geometry("400x300")
-
         win.transient(self.root)
         win.grab_set()
 
-
-        tk.Label(
-            win,
-            text="Nome do Técnico:"
-        ).pack(pady=5)
-
-        nome = tk.Entry(
-            win,
-            width=40
-        )
+        tk.Label(win, text="Nome do Técnico:").pack(pady=5)
+        nome = tk.Entry(win, width=40)
         nome.pack()
 
-
-        tk.Label(
-            win,
-            text="Telefone:"
-        ).pack(pady=5)
-
-        telefone = tk.Entry(
-            win,
-            width=40
-        )
+        tk.Label(win, text="Telefone:").pack(pady=5)
+        telefone = tk.Entry(win, width=40)
         telefone.pack()
 
-
-        tk.Label(
-            win,
-            text="Especialidade:"
-        ).pack(pady=5)
-
-        especialidade = tk.Entry(
-            win,
-            width=40
-        )
+        tk.Label(win, text="Especialidade:").pack(pady=5)
+        especialidade = tk.Entry(win, width=40)
         especialidade.pack()
 
-
-
         def salvar():
-
             nome_tecnico = nome.get().strip()
-
             if not nome_tecnico:
-                messagebox.showwarning(
-                    "Aviso",
-                    "Digite o nome do técnico.",
-                    parent=win
-                )
+                messagebox.showwarning("Aviso", "Digite o nome do técnico.", parent=win)
                 return
-
 
             tecnico = {
                 "id": len(self.tecnicos) + 1,
@@ -588,59 +605,27 @@ class OrdemServicoApp:
                 "especialidade": especialidade.get().strip()
             }
 
-
             self.tecnicos.append(tecnico)
-
             self.salvar_tecnicos()
-
-
-            self.tecnico_entry.delete(
-                0,
-                tk.END
-            )
-
-            self.tecnico_entry.insert(
-                0,
-                tecnico["nome"]
-            )
-
-
+            self.tecnico_entry.delete(0, tk.END)
+            self.tecnico_entry.insert(0, tecnico["nome"])
             win.destroy()
 
-
-
-        tk.Button(
-            win,
-            text="Salvar Técnico",
-            bg="green",
-            fg="white",
-            width=20,
-            command=salvar
-        ).pack(pady=20)
+        tk.Button(win, text="Salvar Técnico", bg="green", fg="white", width=20, command=salvar).pack(pady=20)
 
     def carregar_cliente_selecionado(self):
         nome = self.cliente_var.get()
-
-        cliente = next(
-            (
-                c for c in self.clientes
-                if c.get('nome') == nome
-            ),
-            None
-        )
+        cliente = next((c for c in self.clientes if c.get('nome') == nome), None)
 
         if cliente:
             self.os_atual["cliente"] = cliente
-
             info = (
                 f"Nome: {cliente.get('nome', '')}\n"
                 f"CPF: {cliente.get('cpf', '')}\n"
                 f"Telefone: {cliente.get('telefone', '')}\n"
                 f"Email: {cliente.get('email', '')}\n"
             )
-
             end = cliente.get('endereco', {})
-
             if end:
                 info += (
                     f"Endereço: {end.get('logradouro','')} - "
@@ -648,46 +633,20 @@ class OrdemServicoApp:
                     f"{end.get('localidade','')}/{end.get('uf','')}"
                 )
 
-            self.info_cliente.delete(
-                "1.0",
-                tk.END
-            )
-
-            self.info_cliente.insert(
-                "1.0",
-                info
-            )
+            self.info_cliente.delete("1.0", tk.END)
+            self.info_cliente.insert("1.0", info)
             self.atualizar_resumo_os()
 
     def carregar_tecnicos(self):
-
         try:
-            with open(
-                "tecnicos.json",
-                "r",
-                encoding="utf-8"
-            ) as arquivo:
-
+            with open("tecnicos.json", "r", encoding="utf-8") as arquivo:
                 return json.load(arquivo)
-
         except:
-
             return []
-        
+
     def salvar_tecnicos(self):
-
-        with open(
-            "tecnicos.json",
-            "w",
-            encoding="utf-8"
-        ) as arquivo:
-
-            json.dump(
-                self.tecnicos,
-                arquivo,
-                indent=4,
-                ensure_ascii=False
-            )
+        with open("tecnicos.json", "w", encoding="utf-8") as arquivo:
+            json.dump(self.tecnicos, arquivo, indent=4, ensure_ascii=False)
 
     def buscar_os(self):
         win = tk.Toplevel(self.root)
@@ -827,11 +786,7 @@ class OrdemServicoApp:
         selecao = self.listbox_os.curselection()
 
         if not selecao:
-            messagebox.showwarning(
-                "Aviso",
-                "Selecione uma O.S. para carregar.",
-                parent=self.win_busca_os
-            )
+            messagebox.showwarning("Aviso", "Selecione uma O.S. para carregar.", parent=self.win_busca_os)
             return
 
         idx = selecao[0]
@@ -839,29 +794,16 @@ class OrdemServicoApp:
 
         try:
             os_id = int(texto.split('|')[0].split()[-1])
-
         except Exception:
-            messagebox.showerror(
-                "Erro",
-                "Não foi possível identificar a O.S.",
-                parent=self.win_busca_os
-            )
+            messagebox.showerror("Erro", "Não foi possível identificar a O.S.", parent=self.win_busca_os)
             return
 
-
-        os_item = next(
-            (o for o in self.ordens if o["id"] == os_id),
-            None
-        )
-
+        os_item = next((o for o in self.ordens if o["id"] == os_id), None)
 
         if os_item:
-
             self.os_atual = os_item.copy()
-
             # Fecha somente a janela de pesquisa
             self.win_busca_os.destroy()
-
             # Carrega os dados na tela principal
             self.carregar_os(os_item)
 
@@ -869,123 +811,51 @@ class OrdemServicoApp:
         self.os_atual = os_data.copy()
 
         # Número da O.S.
-        self.os_label.config(
-            text=str(self.os_atual.get("id", "")).zfill(6)
-        )
+        self.os_label.config(text=str(self.os_atual.get("id", "")).zfill(6))
 
         # Cliente
         cliente = self.os_atual.get("cliente", {})
-
         if cliente:
-            self.cliente_var.set(
-                cliente.get("nome", "")
-            )
+            self.cliente_var.set(cliente.get("nome", ""))
             self.carregar_cliente_selecionado()
-
 
         # Equipamento
         equipamento = self.os_atual.get("equipamento", {})
-
         for campo, entry in self.equipamento_entries.items():
             entry.delete(0, tk.END)
-            entry.insert(
-                0,
-                equipamento.get(campo, "")
-            )
-
+            entry.insert(0, equipamento.get(campo, ""))
 
         # Acessórios
-        self.acessorios_text.delete(
-            "1.0",
-            tk.END
-        )
-
-        self.acessorios_text.insert(
-            "1.0",
-            self.os_atual.get("acessorios", "")
-        )
-
+        self.acessorios_text.delete("1.0", tk.END)
+        self.acessorios_text.insert("1.0", self.os_atual.get("acessorios", ""))
 
         # Defeito
-        self.defeito_text.delete(
-            "1.0",
-            tk.END
-        )
-
-        self.defeito_text.insert(
-            "1.0",
-            self.os_atual.get("defeito", "")
-        )
-
+        self.defeito_text.delete("1.0", tk.END)
+        self.defeito_text.insert("1.0", self.os_atual.get("defeito", ""))
 
         # Observações gerais
-        self.obs_gerais.delete(
-            "1.0",
-            tk.END
-        )
+        self.obs_gerais.delete("1.0", tk.END)
+        self.obs_gerais.insert("1.0", self.os_atual.get("obs_gerais", ""))
 
-        self.obs_gerais.insert(
-            "1.0",
-            self.os_atual.get("obs_gerais", "")
-        )
+        self.situacao_var.set(self.os_atual.get("situacao", "Aguardando autorização do orçamento"))
 
-        self.situacao_var.set(
-            self.os_atual.get(
-                "situacao",
-                "Aguardando autorização do orçamento"
-            )
-        )
-
-        self.obs_tecnico_text.delete(
-            "1.0",
-            tk.END
-        )
-
-        self.obs_tecnico_text.insert(
-            "1.0",
-            self.os_atual.get("obs_tecnico", "")
-        )
-
+        self.obs_tecnico_text.delete("1.0", tk.END)
+        self.obs_tecnico_text.insert("1.0", self.os_atual.get("obs_tecnico", ""))
 
         # Técnico responsável
         tecnico = self.os_atual.get("tecnico", "")
-
-        self.tecnico_entry.delete(
-            0,
-            tk.END
-        )
-
+        self.tecnico_entry.delete(0, tk.END)
         if isinstance(tecnico, dict):
-            self.tecnico_entry.insert(
-                0,
-                tecnico.get("nome", "")
-            )
+            self.tecnico_entry.insert(0, tecnico.get("nome", ""))
         else:
             # Compatibilidade com O.S. antigas
-            self.tecnico_entry.insert(
-                0,
-                tecnico
-            )
+            self.tecnico_entry.insert(0, tecnico)
 
-
-        # ===============================
-        # CARREGAR VALORES DOS SERVIÇOS
-        # ===============================
-
+        # Carregar valores dos serviços
         servicos = self.os_atual.get("servicos", {})
-
         for campo, entry in self.valor_entries.items():
-
-            entry.delete(
-                0,
-                tk.END
-            )
-
-            entry.insert(
-                0,
-                str(servicos.get(campo, 0.00))
-            )
-
+            entry.delete(0, tk.END)
+            entry.insert(0, str(servicos.get(campo, 0.00)))
 
         # Atualiza o total
         self.calcular_total()
@@ -1019,6 +889,9 @@ class OrdemServicoApp:
         
         if self.salvar_dados(ARQUIVO_OS, self.ordens):
             self.atualizar_resumo_os()
+            # Mantém a lista da tela inicial sincronizada com a O.S. recém-gravada,
+            # respeitando eventual busca em andamento.
+            self.atualizar_lista_inicial(buscar_ordens(self.ordens, self.filtro_inicial_atual))
             messagebox.showinfo("Sucesso", f"OS {self.os_atual['id']} salva!")
 
     def encerrar_os(self):

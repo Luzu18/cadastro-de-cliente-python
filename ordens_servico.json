@@ -123,7 +123,7 @@
         "defeito": "não liga\ndobradiça quebrada",
         "obs_tecnico": "",
         "total": 200.0,
-        "situacao": "Encerrada",
+        "situacao": "Em reparo",
         "tecnico": {
             "id": 1,
             "nome": "eduardo",
