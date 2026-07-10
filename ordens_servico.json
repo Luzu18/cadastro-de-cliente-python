@@ -31,9 +31,12 @@
         },
         "acessorios": "carregador",
         "obs_tecnico": "",
-        "data_entrada": "",
-        "situacao": "Aguardando autorização do orçamento",
-        "tecnico": ""
+        "data_entrada": "10/07/2026 17:05",
+        "situacao": "Cancelada",
+        "tecnico": {
+            "nome": ""
+        },
+        "obs_gerais": ""
     },
     {
         "id": 2,
@@ -81,7 +84,12 @@
         },
         "acessorios": "",
         "obs_tecnico": "",
-        "data_entrada": ""
+        "data_entrada": "10/07/2026 17:05",
+        "obs_gerais": "",
+        "situacao": "Encerrada",
+        "tecnico": {
+            "nome": ""
+        }
     },
     {
         "id": 3,
@@ -123,7 +131,7 @@
         "defeito": "não liga\ndobradiça quebrada",
         "obs_tecnico": "",
         "total": 200.0,
-        "situacao": "Em reparo",
+        "situacao": "Aguardando autorização do orçamento",
         "tecnico": {
             "id": 1,
             "nome": "eduardo",

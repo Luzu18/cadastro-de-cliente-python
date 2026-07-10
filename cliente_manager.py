@@ -190,8 +190,10 @@ class OrdemServicoApp:
 
         tk.Button(botoes, text="Carregar O.S. Selecionada", bg="#2196F3", fg="white", font=("Arial", 12, "bold"), width=22, command=self.carregar_os_selecionada_inicial).pack(side="left", padx=8)
         tk.Button(botoes, text="Nova O.S.", bg="#4CAF50", fg="white", font=("Arial", 12, "bold"), width=18, command=self.abrir_tela_os).pack(side="left", padx=8)
+        tk.Button(botoes, text="Ver Fechadas", bg="#FF9800", fg="white", font=("Arial", 12, "bold"), width=18, command=self.mostrar_os_fechadas).pack(side="left", padx=8)
         tk.Button(botoes, text="Sair", bg="#f44336", fg="white", font=("Arial", 12, "bold"), width=18, command=self.sair).pack(side="left", padx=8)
 
+        self.mostrar_fechadas_flag = False
         self.atualizar_lista_inicial()
         # Mostra a seta indicando que a lista inicia ordenada por O.S. (mais recente primeiro)
         self._atualizar_cabecalhos_ordenacao("OS")
@@ -217,6 +219,15 @@ class OrdemServicoApp:
             ordens = resultados
         else:
             ordens = sorted(self.ordens, key=lambda item: item.get("id", 0), reverse=True)
+        
+        # Aplicar filtro de abertas/fechadas em qualquer caso
+        situacoes_fechadas = ["Sem reparo", "Cancelada", "Encerrada"]
+        if self.mostrar_fechadas_flag:
+            # Mostrar apenas fechadas
+            ordens = [o for o in ordens if o.get("situacao", "") in situacoes_fechadas]
+        else:
+            # Mostrar apenas abertas (padrão)
+            ordens = [o for o in ordens if o.get("situacao", "") not in situacoes_fechadas]
 
         for os_item in ordens:
             cliente = os_item.get("cliente", {}) or {}
@@ -321,6 +332,13 @@ class OrdemServicoApp:
         self.atualizar_lista_inicial(resultados)
 
     def limpar_busca_inicial(self):
+        self.entry_busca_inicial.delete(0, tk.END)
+        self.filtro_inicial_atual = ""
+        self.mostrar_fechadas_flag = False
+        self.atualizar_lista_inicial()
+
+    def mostrar_os_fechadas(self):
+        self.mostrar_fechadas_flag = not self.mostrar_fechadas_flag
         self.entry_busca_inicial.delete(0, tk.END)
         self.filtro_inicial_atual = ""
         self.atualizar_lista_inicial()
