@@ -927,16 +927,223 @@ class OrdemServicoApp:
             return
 
         try:
+            from reportlab.platypus import Table, TableStyle, Spacer, Paragraph
+            from reportlab.lib.units import cm
+            from reportlab.lib import colors
+            
             filename = f"OS_{self.os_atual['id']:06d}.pdf"
-            doc = SimpleDocTemplate(filename, pagesize=A4)
+            doc = SimpleDocTemplate(filename, pagesize=A4, rightMargin=1*cm, leftMargin=1*cm, topMargin=0.8*cm, bottomMargin=0.8*cm)
             styles = getSampleStyleSheet()
             story = []
-            story.append(Paragraph(f"<b>ORDEM DE SERVIÇO Nº {self.os_atual['id']:06d}</b>", styles['Title']))
-            story.append(Paragraph(f"Data: {self.os_atual['data']}", styles['Normal']))
+            
+            # ===== CABEÇALHO =====
+            header_data = [
+                ['NAND ASSISTÊNCIA', f"Orçamento da Ordem de Serviço {self.os_atual['id']:06d}"],
+            ]
+            header_table = Table(header_data, colWidths=[7*cm, 11*cm])
+            header_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2C3E50')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (0, 0), 'LEFT'),
+                ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
+                ('FONTNAME', (0, 0), (0, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (0, 0), 15),
+                ('FONTNAME', (1, 0), (1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (1, 0), (1, 0), 12),
+                ('VALIGN', (0, 0), (-1, 0), 'MIDDLE'),
+                ('TOPPADDING', (0, 0), (-1, 0), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                ('LEFTPADDING', (0, 0), (-1, 0), 10),
+                ('RIGHTPADDING', (0, 0), (-1, 0), 10),
+            ]))
+            story.append(header_table)
+            story.append(Spacer(1, 0.25*cm))
+            
+            # ===== INFORMAÇÕES DO CLIENTE =====
+            cliente = self.os_atual.get("cliente", {}) or {}
+            equipamento = self.os_atual.get("equipamento", {}) or {}
+            
+            # Extrair dados de endereço que vem da API ViaCEP
+            endereco_dict = cliente.get('endereco', {}) or {}
+            
+            # Se endereco é um dicionário com dados da ViaCEP
+            if isinstance(endereco_dict, dict) and endereco_dict.get('logradouro'):
+                endereco_completo = f"{endereco_dict.get('logradouro', '-')} {endereco_dict.get('numero', '-')}"
+                cep = endereco_dict.get('cep', '-')
+                bairro = endereco_dict.get('bairro', '-')
+                cidade = endereco_dict.get('localidade', '-')
+            else:
+                endereco_completo = '-'
+                cep = '-'
+                bairro = '-'
+                cidade = '-'
+            
+            info_cliente_data = [
+                ['Cliente', cliente.get('nome', '-'), 'Contato', cliente.get('telefone', '-')],
+                ['Endereço', endereco_completo, 'CEP', cep],
+                ['Bairro', bairro, 'Cidade', cidade],
+                ['CPF/CNPJ', cliente.get('cpf', '-'), 'Email', cliente.get('email', '-')],
+            ]
+            
+            info_table = Table(info_cliente_data, colWidths=[2.3*cm, 6.2*cm, 2.3*cm, 6.2*cm])
+            info_table.setStyle(TableStyle([
+                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#ECF0F1')),
+                ('BACKGROUND', (2, 0), (2, -1), colors.HexColor('#ECF0F1')),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#BDC3C7')),
+                ('TOPPADDING', (0, 0), (-1, -1), 5),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+                ('LEFTPADDING', (0, 0), (-1, -1), 5),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 5),
+                ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+                ('FONTNAME', (2, 0), (2, -1), 'Helvetica-Bold'),
+            ]))
+            story.append(info_table)
+            story.append(Spacer(1, 0.2*cm))
+            
+            # ===== INFORMAÇÕES DO EQUIPAMENTO =====
+            marca = equipamento.get('Marca', '-')
+            modelo = equipamento.get('Modelo', '-')
+            serie = equipamento.get('Número de Série', '-')
+            
+            equip_data = [
+                ['Marca', marca, 'Modelo', modelo],
+                ['Nº Série', serie, 'Acessórios', self.os_atual.get('acessorios', '-')],
+            ]
+            
+            equip_table = Table(equip_data, colWidths=[2.3*cm, 6.2*cm, 2.3*cm, 6.2*cm])
+            equip_table.setStyle(TableStyle([
+                ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8.5),
+                ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#ECF0F1')),
+                ('BACKGROUND', (2, 0), (2, -1), colors.HexColor('#ECF0F1')),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#BDC3C7')),
+                ('TOPPADDING', (0, 0), (-1, -1), 5),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+                ('LEFTPADDING', (0, 0), (-1, -1), 5),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 5),
+                ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+                ('FONTNAME', (2, 0), (2, -1), 'Helvetica-Bold'),
+            ]))
+            story.append(equip_table)
+            story.append(Spacer(1, 0.25*cm))
+            
+            # ===== DEFEITO/RECLAMAÇÃO =====
+            defeito_titulo = Paragraph("<b>DEFEITO/RECLAMAÇÃO</b>", styles['Normal'])
+            story.append(defeito_titulo)
+            
+            defeito_box_data = [
+                [self.os_atual.get('defeito', '-') or '-'],
+            ]
+            defeito_box = Table(defeito_box_data, colWidths=[16.5*cm])
+            defeito_box.setStyle(TableStyle([
+                ('FONTSIZE', (0, 0), (-1, -1), 8.5),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#BDC3C7')),
+                ('TOPPADDING', (0, 0), (-1, -1), 5),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+                ('LEFTPADDING', (0, 0), (-1, -1), 5),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 5),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ]))
+            story.append(defeito_box)
+            story.append(Spacer(1, 0.25*cm))
+            
+            # ===== VALORES DO ORÇAMENTO =====
+            valores_titulo = Paragraph("<b>VALORES DO ORÇAMENTO</b>", styles['Normal'])
+            story.append(valores_titulo)
+            
+            servicos = self.os_atual.get('servicos', {}) or {}
+            valores_data = [['Descrição', 'Quantidade', 'Valor Unitário', 'Total']]
+            
+            for descricao, valor in servicos.items():
+                try:
+                    valor_float = float(valor) if isinstance(valor, (int, float, str)) else 0
+                    if valor_float > 0:
+                        valor_formatado = _formatar_valor(valor_float)
+                        valores_data.append([descricao, '1', valor_formatado, valor_formatado])
+                except:
+                    pass
+            
+            if len(valores_data) == 1:
+                valores_data.append(['(Sem itens)', '', '', ''])
+            
+            valores_table = Table(valores_data, colWidths=[6.5*cm, 2.5*cm, 3.5*cm, 3.5*cm])
+            valores_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2C3E50')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 9),
+                ('ALIGN', (1, 1), (-1, -1), 'RIGHT'),
+                ('ALIGN', (0, 1), (0, -1), 'LEFT'),
+                ('FONTSIZE', (0, 1), (-1, -1), 8.5),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#BDC3C7')),
+                ('TOPPADDING', (0, 0), (-1, -1), 5),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+                ('LEFTPADDING', (0, 0), (-1, -1), 5),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 5),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#F8F9F9')]),
+            ]))
+            story.append(valores_table)
+            story.append(Spacer(1, 0.2*cm))
+            
+            # ===== TOTAIS =====
+            total_valor = _formatar_valor(self.os_atual.get('total', 0))
+            
+            totais_data = [
+                ['Mão de obra/Serviço', 'R$ 0,00'],
+                ['Peças e Materiais', f'R$ {total_valor}'],
+                ['Outros', 'R$ 0,00'],
+                ['TOTAL', f'R$ {total_valor}'],
+            ]
+            
+            totais_table = Table(totais_data, colWidths=[13*cm, 4*cm])
+            totais_table.setStyle(TableStyle([
+                ('FONTNAME', (0, 0), (0, -2), 'Helvetica'),
+                ('FONTSIZE', (0, 0), (0, -2), 8.5),
+                ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#2C3E50')),
+                ('TEXTCOLOR', (0, -1), (-1, -1), colors.whitesmoke),
+                ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, -1), (-1, -1), 10),
+                ('ALIGN', (0, 0), (0, -1), 'RIGHT'),
+                ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#BDC3C7')),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+                ('ROWBACKGROUNDS', (0, 0), (-1, -2), [colors.white, colors.HexColor('#F8F9F9')]),
+            ]))
+            story.append(totais_table)
+            story.append(Spacer(1, 0.6*cm))
+            
+            # ===== ASSINATURAS =====
+            assinatura_data = [
+                ['_' * 28, '', '_' * 28],
+                ['CLIENTE', '', 'NAND ASSISTÊNCIA'],
+            ]
+            assinatura_table = Table(assinatura_data, colWidths=[5*cm, 6.5*cm, 5*cm])
+            assinatura_table.setStyle(TableStyle([
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTSIZE', (0, 0), (-1, 0), 10),
+                ('FONTSIZE', (0, 1), (-1, 1), 9),
+                ('FONTNAME', (0, 1), (-1, 1), 'Helvetica-Bold'),
+                ('VALIGN', (0, 0), (-1, 0), 'BOTTOM'),
+                ('TOPPADDING', (0, 0), (-1, 0), 25),
+                ('BOTTOMPADDING', (0, 1), (-1, 1), 3),
+            ]))
+            story.append(assinatura_table)
+            
             doc.build(story)
             messagebox.showinfo("PDF Gerado", f"Arquivo salvo como: {filename}")
         except Exception as e:
             messagebox.showerror("Erro", f"Não foi possível gerar o PDF: {e}")
+
 
     def sair(self):
         if self.main_frame.winfo_ismapped():
