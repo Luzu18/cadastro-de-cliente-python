@@ -113,14 +113,134 @@ class OrdemServicoApp:
         self.root.title("Ordem de Serviço - Assistência Técnica")
         self.root.geometry("1400x820")
         self.root.configure(bg="#f0f0f0")
-        
+
+        self.inicio_frame = tk.Frame(self.root, bg="#f0f0f0")
+        self.main_frame = tk.Frame(self.root, bg="#f0f0f0")
+
+        self.criar_tela_inicial()
         self.criar_cabecalho()
         self.criar_area_cliente()
         self.criar_area_equipamento()
         self.criar_area_servicos()
-        
+
+        self.main_frame.pack_forget()
+        self.inicio_frame.pack(fill="both", expand=True)
+
         self.root.protocol("WM_DELETE_WINDOW", self.sair)
         self.root.mainloop()
+
+    def criar_tela_inicial(self):
+        titulo = tk.Label(self.inicio_frame, text="Lista de Ordens de Serviço", font=("Arial", 24, "bold"), bg="#f0f0f0")
+        titulo.pack(pady=(20, 5))
+
+        descricao = tk.Label(
+            self.inicio_frame,
+            text="Selecione uma O.S. para carregar ou inicie uma nova ordem.",
+            font=("Arial", 14),
+            bg="#f0f0f0"
+        )
+        descricao.pack(pady=(0, 15))
+
+        busca_frame = tk.Frame(self.inicio_frame, bg="#f0f0f0")
+        busca_frame.pack(fill="x", padx=20, pady=(0, 10))
+
+        tk.Label(busca_frame, text="Buscar O.S./Cliente/CPF:", font=("Arial", 11), bg="#f0f0f0").grid(row=0, column=0, sticky="w")
+        self.entry_busca_inicial = tk.Entry(busca_frame, width=45)
+        self.entry_busca_inicial.grid(row=0, column=1, padx=8)
+        tk.Button(busca_frame, text="Buscar", width=12, command=self.filtrar_os_inicial).grid(row=0, column=2, padx=4)
+        tk.Button(busca_frame, text="Limpar", width=12, command=self.limpar_busca_inicial).grid(row=0, column=3, padx=4)
+
+        frame_lista = tk.Frame(self.inicio_frame, bg="#f0f0f0")
+        frame_lista.pack(fill="both", expand=True, padx=20, pady=10)
+
+        colunas = ["OS", "Cliente", "CPF", "Situação", "Entrada", "Saída"]
+        self.tree_inicial = ttk.Treeview(frame_lista, columns=colunas, show="headings", height=14)
+        for coluna in colunas:
+            largura = 120 if coluna != "Cliente" else 260
+            self.tree_inicial.heading(coluna, text=coluna)
+            self.tree_inicial.column(coluna, width=largura, anchor="w")
+
+        scrollbar = ttk.Scrollbar(frame_lista, orient="vertical", command=self.tree_inicial.yview)
+        self.tree_inicial.configure(yscrollcommand=scrollbar.set)
+        self.tree_inicial.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        self.tree_inicial.bind("<Double-1>", self.carregar_os_selecionada_inicial)
+
+        botoes = tk.Frame(self.inicio_frame, bg="#f0f0f0")
+        botoes.pack(pady=10)
+
+        tk.Button(botoes, text="Carregar O.S. Selecionada", bg="#2196F3", fg="white", font=("Arial", 12, "bold"), width=22, command=self.carregar_os_selecionada_inicial).pack(side="left", padx=8)
+        tk.Button(botoes, text="Nova O.S.", bg="#4CAF50", fg="white", font=("Arial", 12, "bold"), width=18, command=self.abrir_tela_os).pack(side="left", padx=8)
+        tk.Button(botoes, text="Sair", bg="#f44336", fg="white", font=("Arial", 12, "bold"), width=18, command=self.sair).pack(side="left", padx=8)
+
+        self.atualizar_lista_inicial()
+
+    def abrir_tela_os(self):
+        self.inicio_frame.pack_forget()
+        self.main_frame.pack(fill="both", expand=True)
+
+    def voltar_para_inicial(self):
+        if self.main_frame.winfo_ismapped():
+            self.main_frame.pack_forget()
+            self.inicio_frame.pack(fill="both", expand=True)
+
+    def atualizar_lista_inicial(self, resultados=None):
+        for item in self.tree_inicial.get_children():
+            self.tree_inicial.delete(item)
+
+        ordens = resultados if resultados is not None else self.ordens
+        for os_item in sorted(ordens, key=lambda item: item.get("id", 0), reverse=True):
+            cliente = os_item.get("cliente", {}) or {}
+            cpf = str(cliente.get("cpf", ""))
+            cpf_formatado = cpf if cpf else "-"
+            self.tree_inicial.insert(
+                "",
+                tk.END,
+                values=(
+                    str(os_item.get("id", "")).zfill(6),
+                    cliente.get("nome", "Sem cliente"),
+                    cpf_formatado,
+                    os_item.get("situacao", ""),
+                    os_item.get("data_entrada", ""),
+                    os_item.get("data_saida", "")
+                )
+            )
+
+    def filtrar_os_inicial(self):
+        termo = (self.entry_busca_inicial.get() or "").strip()
+        if not termo:
+            self.atualizar_lista_inicial()
+            return
+
+        resultados = buscar_ordens(self.ordens, termo)
+        self.atualizar_lista_inicial(resultados)
+
+    def limpar_busca_inicial(self):
+        self.entry_busca_inicial.delete(0, tk.END)
+        self.atualizar_lista_inicial()
+
+    def carregar_os_selecionada_inicial(self, event=None):
+        selecionado = self.tree_inicial.selection()
+        if not selecionado:
+            messagebox.showwarning("Aviso", "Selecione uma O.S. para carregar.", parent=self.root)
+            return
+
+        item = self.tree_inicial.item(selecionado[0])
+        valores = item.get("values", [])
+        if not valores:
+            return
+
+        try:
+            os_id = int(str(valores[0]).zfill(6))
+        except Exception:
+            messagebox.showerror("Erro", "Não foi possível identificar a O.S.", parent=self.root)
+            return
+
+        os_item = next((o for o in self.ordens if o.get("id") == os_id), None)
+        if os_item:
+            self.carregar_os(os_item)
+            self.abrir_tela_os()
 
     def carregar_dados(self, arquivo):
         if os.path.exists(arquivo):
@@ -158,7 +278,7 @@ class OrdemServicoApp:
         }
 
     def criar_cabecalho(self):
-        header = tk.Frame(self.root, bg="black", height=70)
+        header = tk.Frame(self.main_frame, bg="black", height=70)
         header.pack(fill="x")
         tk.Label(header, text="O.S. nº", fg="white", bg="black", font=("Arial", 16)).place(x=30, y=20)
         self.os_label = tk.Label(header, text=str(self.os_atual["id"]).zfill(6), fg="#ff0000", bg="black", font=("Arial", 28, "bold"))
@@ -167,6 +287,7 @@ class OrdemServicoApp:
         btns = tk.Frame(header, bg="black")
         btns.place(x=680, y=15)
         tk.Button(btns, text="Buscar OS", bg="#FF9800", fg="white", command=self.buscar_os).pack(side="left", padx=4)
+        tk.Button(btns, text="Voltar à Lista", bg="#9E9E9E", fg="white", command=self.voltar_para_inicial).pack(side="left", padx=4)
         tk.Button(btns, text="Novo Cliente", bg="#FF9800", fg="white", command=self.cadastrar_novo_cliente).pack(side="left", padx=4)
         tk.Button(btns, text="Imprimir PDF", bg="#673AB7", fg="white", command=self.gerar_pdf).pack(side="left", padx=4)
         tk.Button(btns, text="Gravar OS", bg="#2196F3", fg="white", command=self.gravar_os).pack(side="left", padx=4)
@@ -174,7 +295,7 @@ class OrdemServicoApp:
         tk.Button(btns, text="Nova OS", bg="white", command=self.nova_os).pack(side="left", padx=4)
 
     def criar_area_cliente(self):
-        frame = tk.LabelFrame(self.root, text=" Dados do Cliente ", font=("Arial", 12, "bold"), padx=10, pady=8)
+        frame = tk.LabelFrame(self.main_frame, text=" Dados do Cliente ", font=("Arial", 12, "bold"), padx=10, pady=8)
         frame.pack(fill="x", padx=10, pady=8)
         self.cliente_var = tk.StringVar()
         nomes = [c.get('nome', '') for c in self.clientes]
@@ -185,7 +306,7 @@ class OrdemServicoApp:
         self.info_cliente.grid(row=1, column=0, columnspan=3, pady=8, padx=10)
 
     def criar_area_equipamento(self):
-        frame = tk.LabelFrame(self.root, text=" Equipamento ", font=("Arial", 12, "bold"), padx=10, pady=8)
+        frame = tk.LabelFrame(self.main_frame, text=" Equipamento ", font=("Arial", 12, "bold"), padx=10, pady=8)
         frame.pack(fill="x", padx=10, pady=5)
         self.equipamento_entries = {}
         campos = ["Marca", "Modelo", "Número de Série"]
@@ -196,7 +317,7 @@ class OrdemServicoApp:
             self.equipamento_entries[campo] = entry
 
     def criar_area_servicos(self):
-        frame = tk.LabelFrame(self.root, text=" Serviços, Acessórios, Defeito e Observações ", font=("Arial", 12, "bold"))
+        frame = tk.LabelFrame(self.main_frame, text=" Serviços, Acessórios, Defeito e Observações ", font=("Arial", 12, "bold"))
         frame.pack(fill="both", expand=True, padx=10, pady=8)
         
         status_frame = tk.Frame(frame)
@@ -945,6 +1066,10 @@ class OrdemServicoApp:
             messagebox.showerror("Erro", f"Não foi possível gerar o PDF: {e}")
 
     def sair(self):
+        if self.main_frame.winfo_ismapped():
+            self.voltar_para_inicial()
+            return
+
         if messagebox.askokcancel("Sair", "Deseja sair?"):
             self.root.destroy()
 
