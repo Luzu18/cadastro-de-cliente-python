@@ -190,7 +190,7 @@ class OrdemServicoApp:
 
         tk.Button(botoes, text="Carregar O.S. Selecionada", bg="#2196F3", fg="white", font=("Arial", 12, "bold"), width=22, command=self.carregar_os_selecionada_inicial).pack(side="left", padx=8)
         tk.Button(botoes, text="Nova O.S.", bg="#4CAF50", fg="white", font=("Arial", 12, "bold"), width=18, command=self.abrir_tela_os).pack(side="left", padx=8)
-        tk.Button(botoes, text="Ver Fechadas", bg="#FF9800", fg="white", font=("Arial", 12, "bold"), width=18, command=self.mostrar_os_fechadas).pack(side="left", padx=8)
+        tk.Button(botoes, text="Ver Fechadas / Abertas", bg="#FF9800", fg="white", font=("Arial", 12, "bold"), width=18, command=self.mostrar_os_fechadas).pack(side="left", padx=8)
         tk.Button(botoes, text="Sair", bg="#f44336", fg="white", font=("Arial", 12, "bold"), width=18, command=self.sair).pack(side="left", padx=8)
 
         self.mostrar_fechadas_flag = False
