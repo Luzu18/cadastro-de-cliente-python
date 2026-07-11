@@ -18,8 +18,25 @@ import json as _json
 import sqlite3
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
+# Quando empacotado com PyInstaller, os arquivos ficam em sys._MEIPASS.
+# Garantir que o diretório correto esteja no sys.path e que o módulo
+# `settings` seja importável — se necessário, carregamos o arquivo
+# `settings.py` explicitamente para evitar "No module named 'settings'".
+bundle_dir = getattr(sys, '_MEIPASS', BASE_DIR)
+if bundle_dir not in sys.path:
+    sys.path.insert(0, bundle_dir)
+
+try:
+    import settings  # noqa: E402,F401 - prefer import normal quando possível
+except Exception:
+    # Tenta carregar manualmente do arquivo settings.py que está ao lado do bundle
+    settings_path = os.path.join(bundle_dir, 'settings.py')
+    if os.path.exists(settings_path):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('settings', settings_path)
+        settings = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(settings)  # type: ignore
+        sys.modules['settings'] = settings
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "settings")
 
@@ -29,7 +46,7 @@ django.setup()
 from django.core.management import call_command  # noqa: E402
 from os_app.models import Cliente, Tecnico, OrdemServico  # noqa: E402
 
-CAMINHO_BANCO = os.path.join(BASE_DIR, "os_database.db")
+CAMINHO_BANCO = os.path.join(getattr(sys, '_MEIPASS', BASE_DIR), "os_database.db")
 
 _inicializado = False
 
