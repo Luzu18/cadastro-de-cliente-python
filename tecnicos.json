@@ -4,5 +4,11 @@
         "nome": "eduardo",
         "telefone": "62981358415",
         "especialidade": "impressora"
+    },
+    {
+        "id": 2,
+        "nome": "allisson",
+        "telefone": "62981358415",
+        "especialidade": "tecnico"
     }
 ]

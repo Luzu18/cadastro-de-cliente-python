@@ -125,18 +125,18 @@
         "acessorios": "cabo e fonte\nmochila",
         "servicos": {
             "Mão-de-obra": 200.0,
-            "Peças": 0.0,
+            "Peças": 250.0,
             "Outros": 0.0
         },
         "defeito": "não liga\ndobradiça quebrada",
-        "obs_tecnico": "",
-        "total": 200.0,
+        "obs_tecnico": "instalação ssd 240g",
+        "total": 450.0,
         "situacao": "Aguardando autorização do orçamento",
         "tecnico": {
-            "id": 1,
-            "nome": "eduardo",
+            "id": 2,
+            "nome": "allisson",
             "telefone": "62981358415",
-            "especialidade": "impressora"
+            "especialidade": "tecnico"
         },
         "data_saida": "10/07/2026 13:14",
         "obs_gerais": ""
