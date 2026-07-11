@@ -21,8 +21,7 @@ except ImportError:  # pragma: no cover - depende do ambiente
     getSampleStyleSheet = None
     REPORTLAB_DISPONIVEL = False
 
-ARQUIVO_OS = 'ordens_servico.json'
-ARQUIVO_CLIENTES = 'clientes.json'
+from database import Database
 
 
 def _formatar_valor(valor):
@@ -30,6 +29,119 @@ def _formatar_valor(valor):
         return f"{float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except (TypeError, ValueError):
         return "0,00"
+
+
+def _maiusc(valor):
+    """Converte texto para maiúsculo com segurança (aceita None, número etc.)."""
+    if valor is None:
+        return ""
+    return str(valor).upper()
+
+
+def _vincular_maiusculas_entry(entry):
+    """Faz um campo Entry converter automaticamente para maiúsculas tudo o que
+    for digitado ou colado, em tempo real, sem perder a posição do cursor."""
+    def _forcar(event=None):
+        texto = entry.get()
+        maiusculo = texto.upper()
+        if texto != maiusculo:
+            pos = entry.index(tk.INSERT)
+            entry.delete(0, tk.END)
+            entry.insert(0, maiusculo)
+            entry.icursor(pos)
+    entry.bind("<KeyRelease>", _forcar)
+    entry.bind("<<Paste>>", lambda e: entry.after(1, _forcar))
+    return entry
+
+
+def _vincular_maiusculas_texto(text_widget):
+    """Mesma ideia do Entry, mas para campos de texto (Text) com várias linhas."""
+    def _forcar(event=None):
+        texto = text_widget.get("1.0", tk.END)
+        maiusculo = texto.upper()
+        if texto != maiusculo:
+            pos = text_widget.index(tk.INSERT)
+            text_widget.delete("1.0", tk.END)
+            text_widget.insert("1.0", maiusculo)
+            text_widget.mark_set(tk.INSERT, pos)
+    text_widget.bind("<KeyRelease>", _forcar)
+    text_widget.bind("<<Paste>>", lambda e: text_widget.after(1, _forcar))
+    return text_widget
+
+
+def _maiusculizar_cliente(cliente):
+    """Garante que os dados de texto livre do cliente fiquem em maiúsculo -
+    inclusive dados antigos, cadastrados antes desta melhoria existir."""
+    cliente = dict(cliente or {})
+    cliente["nome"] = _maiusc(cliente.get("nome", ""))
+    cliente["cpf"] = _maiusc(cliente.get("cpf", ""))
+    cliente["cnpj"] = _maiusc(cliente.get("cnpj", ""))
+    cliente["telefone"] = _maiusc(cliente.get("telefone", ""))
+    cliente["email"] = _maiusc(cliente.get("email", ""))
+    endereco = cliente.get("endereco") or {}
+    if isinstance(endereco, dict):
+        cliente["endereco"] = {
+            chave: (_maiusc(valor) if isinstance(valor, str) else valor)
+            for chave, valor in endereco.items()
+        }
+    return cliente
+
+
+def _maiusculizar_tecnico(tecnico):
+    tecnico = dict(tecnico or {})
+    tecnico["nome"] = _maiusc(tecnico.get("nome", ""))
+    tecnico["telefone"] = _maiusc(tecnico.get("telefone", ""))
+    tecnico["especialidade"] = _maiusc(tecnico.get("especialidade", ""))
+    return tecnico
+
+
+def _maiusculizar_os(os_item):
+    """Idem, para os campos de texto livre de uma Ordem de Serviço.
+    Situação, id, datas e valores de serviço ficam de fora de propósito:
+    situação vem de uma lista fixa de opções (não é texto digitado), e
+    id/datas/valores não são texto - maiusculizá-los não faz sentido."""
+    os_item = dict(os_item or {})
+    equipamento = os_item.get("equipamento") or {}
+    if isinstance(equipamento, dict):
+        os_item["equipamento"] = {
+            chave: (_maiusc(valor) if isinstance(valor, str) else valor)
+            for chave, valor in equipamento.items()
+        }
+    os_item["acessorios"] = _maiusc(os_item.get("acessorios", ""))
+    os_item["defeito"] = _maiusc(os_item.get("defeito", ""))
+    os_item["obs_gerais"] = _maiusc(os_item.get("obs_gerais", ""))
+    os_item["obs_tecnico"] = _maiusc(os_item.get("obs_tecnico", ""))
+
+    cliente = os_item.get("cliente")
+    if isinstance(cliente, dict) and cliente:
+        os_item["cliente"] = _maiusculizar_cliente(cliente)
+
+    tecnico = os_item.get("tecnico")
+    if isinstance(tecnico, dict):
+        os_item["tecnico"] = _maiusculizar_tecnico(tecnico)
+    elif isinstance(tecnico, str) and tecnico:
+        os_item["tecnico"] = _maiusc(tecnico)
+
+    return os_item
+
+
+def obter_pasta_documentos():
+    """Retorna o caminho da pasta Documentos do usuário no Windows (respeitando
+    até pasta Documentos redirecionada para o OneDrive). Em outros sistemas
+    operacionais, usa a pasta 'Documents' dentro da pasta pessoal do usuário."""
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            CSIDL_PERSONAL = 5  # "Minha pasta Documentos"
+            SHGFP_TYPE_CURRENT = 0
+            buf = ctypes.create_unicode_buffer(wintypes.MAX_PATH)
+            ctypes.windll.shell32.SHGetFolderPathW(None, CSIDL_PERSONAL, None, SHGFP_TYPE_CURRENT, buf)
+            if buf.value:
+                return buf.value
+        except Exception:
+            pass
+    return os.path.join(os.path.expanduser("~"), "Documents")
 
 
 def formatar_os_para_lista(os_item):
@@ -63,6 +175,7 @@ def buscar_ordens(ordens, termo):
             str(os_item.get("situacao", "")),
             str(cliente.get("nome", "")),
             str(cliente.get("cpf", "")),
+            str(cliente.get("cnpj", "")),
             str(equipamento.get("Marca", "")),
             str(equipamento.get("Modelo", "")),
             str(equipamento.get("Número de Série", "")),
@@ -86,7 +199,7 @@ def montar_resumo_os(os_item):
     resumo = [
         f"O.S. nº {os_item.get('id', '-')}",
         f"Cliente: {cliente.get('nome', 'Sem cliente')}",
-        f"CPF: {cliente.get('cpf', '-')}",
+        f"CPF/CNPJ: {cliente.get('cpf', '') or cliente.get('cnpj', '') or '-'}",
         f"Equipamento: {detalhes_equipamento}",
         f"Situação: {os_item.get('situacao', 'Sem situação')}",
         f"Técnico: {tecnico_nome or '-'}",
@@ -115,10 +228,16 @@ class OrdemServicoApp:
     ]
 
     def __init__(self):
-        self.ordens = self.carregar_dados(ARQUIVO_OS)
-        self.clientes = self.carregar_dados(ARQUIVO_CLIENTES)
+        self.db = Database()
+        self.ordens = [_maiusculizar_os(o) for o in self.db.carregar_ordens()]
+        self.clientes = [_maiusculizar_cliente(c) for c in self.db.carregar_clientes()]
         self.os_atual = self.criar_nova_os()
-        self.tecnicos = self.carregar_tecnicos()
+        self.tecnicos = [_maiusculizar_tecnico(t) for t in self.db.carregar_tecnicos()]
+        # Garante que dados cadastrados antes desta melhoria (ainda em
+        # minúsculo/misto no banco) também fiquem salvos em maiúsculo daqui pra frente.
+        self.db.salvar_clientes(self.clientes)
+        self.db.salvar_tecnicos(self.tecnicos)
+        self.db.salvar_ordens(self.ordens)
         self.filtro_inicial_atual = ""
         # Ciclo de ordenação da coluna "Situação": 0=fluxo ↑, 1=fluxo ↓, 2=A-Z, 3=Z-A
         # Começa em -1 para que o primeiro clique caia no modo 0 (fluxo crescente),
@@ -160,7 +279,7 @@ class OrdemServicoApp:
         busca_frame = tk.Frame(self.inicio_frame, bg="#f0f0f0")
         busca_frame.pack(fill="x", padx=20, pady=(0, 10))
 
-        tk.Label(busca_frame, text="Buscar O.S./Cliente/CPF:", font=("Arial", 11), bg="#f0f0f0").grid(row=0, column=0, sticky="w")
+        tk.Label(busca_frame, text="Buscar O.S./Cliente/CPF/CNPJ:", font=("Arial", 11), bg="#f0f0f0").grid(row=0, column=0, sticky="w")
         self.entry_busca_inicial = tk.Entry(busca_frame, width=45)
         self.entry_busca_inicial.grid(row=0, column=1, padx=8)
         tk.Button(busca_frame, text="Buscar", width=12, command=self.filtrar_os_inicial).grid(row=0, column=2, padx=4)
@@ -169,10 +288,10 @@ class OrdemServicoApp:
         frame_lista = tk.Frame(self.inicio_frame, bg="#f0f0f0")
         frame_lista.pack(fill="both", expand=True, padx=20, pady=10)
 
-        colunas = ["OS", "Cliente", "CPF", "Situação", "Entrada", "Saída"]
+        colunas = ["OS", "Cliente", "CPF / CNPJ", "Situação", "Entrada", "Saída"]
         self.tree_inicial = ttk.Treeview(frame_lista, columns=colunas, show="headings", height=14)
         self.ordenacao_inicial = {coluna: False for coluna in colunas}
-        larguras_colunas = {"OS": 110, "Cliente": 260, "CPF": 130, "Situação": 190, "Entrada": 130, "Saída": 130}
+        larguras_colunas = {"OS": 110, "Cliente": 260, "CPF / CNPJ": 140, "Situação": 190, "Entrada": 130, "Saída": 130}
         for coluna in colunas:
             largura = larguras_colunas.get(coluna, 130)
             self.tree_inicial.heading(coluna, text=coluna, command=lambda c=coluna: self.ordenar_coluna_inicial(c))
@@ -232,14 +351,15 @@ class OrdemServicoApp:
         for os_item in ordens:
             cliente = os_item.get("cliente", {}) or {}
             cpf = str(cliente.get("cpf", ""))
-            cpf_formatado = cpf if cpf else "-"
+            cnpj = str(cliente.get("cnpj", ""))
+            cpf_cnpj = cpf if cpf else (cnpj if cnpj else "-")
             self.tree_inicial.insert(
                 "",
                 tk.END,
                 values=(
                     str(os_item.get("id", "")).zfill(6),
                     cliente.get("nome", "Sem cliente"),
-                    cpf_formatado,
+                    cpf_cnpj,
                     os_item.get("situacao", ""),
                     os_item.get("data_entrada", ""),
                     os_item.get("data_saida", "")
@@ -268,9 +388,11 @@ class OrdemServicoApp:
             if coluna == "OS":
                 ordenado = sorted(base, key=lambda o: int(o.get("id", 0)), reverse=reverse)
             elif coluna == "Cliente":
-                ordenado = sorted(base, key=lambda o: (o.get("cliente", {}) or {}).get("nome", "").lower(), reverse=reverse)
-            elif coluna == "CPF":
-                ordenado = sorted(base, key=lambda o: self._limpar_cpf(str((o.get("cliente", {}) or {}).get("cpf", ""))), reverse=reverse)
+                ordenado = sorted(base, key=lambda o: str(o.get("cliente", {}).get("nome", "")).lower(), reverse=reverse)
+            elif coluna == "CPF / CNPJ":
+                def _limpar_cpf_cnpj(valor):
+                    return int(''.join(ch for ch in valor if ch.isdigit())) if valor and any(ch.isdigit() for ch in valor) else 0
+                ordenado = sorted(base, key=lambda o: _limpar_cpf_cnpj((o.get("cliente", {}) or {}).get("cpf", "") or (o.get("cliente", {}) or {}).get("cnpj", "")), reverse=reverse)
             elif coluna in {"Entrada", "Saída"}:
                 ordenado = sorted(base, key=lambda o: self._parse_data(o.get("data_entrada" if coluna == "Entrada" else "data_saida", "")), reverse=reverse)
             else:
@@ -380,23 +502,6 @@ class OrdemServicoApp:
         if region != "heading":
             self.carregar_os_selecionada_inicial()
 
-    def carregar_dados(self, arquivo):
-        if os.path.exists(arquivo):
-            try:
-                with open(arquivo, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except:
-                return []
-        return []
-
-    def salvar_dados(self, arquivo, dados):
-        try:
-            with open(arquivo, 'w', encoding='utf-8') as f:
-                json.dump(dados, f, ensure_ascii=False, indent=4)
-            return True
-        except:
-            return False
-
     def criar_nova_os(self):
         return {
             "id": len(self.ordens) + 1,
@@ -452,6 +557,7 @@ class OrdemServicoApp:
             tk.Label(frame, text=campo + ":").grid(row=0, column=i*2, sticky="w", padx=12, pady=8)
             entry = tk.Entry(frame, width=30)
             entry.grid(row=0, column=i*2 + 1, padx=8, pady=8)
+            _vincular_maiusculas_entry(entry)
             self.equipamento_entries[campo] = entry
 
     def criar_area_servicos(self):
@@ -468,6 +574,7 @@ class OrdemServicoApp:
         tk.Label(status_frame, text="   Técnico Responsável:").pack(side="left")
         self.tecnico_entry = tk.Entry(status_frame, width=25)
         self.tecnico_entry.pack(side="left", padx=5)
+        _vincular_maiusculas_entry(self.tecnico_entry)
         tk.Button(status_frame, text="➕", width=3, font=("Arial", 12, "bold"), command=self.cadastrar_tecnico).pack(side="left", padx=5)
 
         self.resumo_os_label = tk.Label(
@@ -490,14 +597,17 @@ class OrdemServicoApp:
         tk.Label(left, text="Acessórios:").pack(anchor="w")
         self.acessorios_text = tk.Text(left, height=3)
         self.acessorios_text.pack(fill="both", expand=True, pady=5)
+        _vincular_maiusculas_texto(self.acessorios_text)
 
         tk.Label(left, text="Observações gerais:").pack(anchor="w")
         self.obs_gerais = tk.Text(left, height=3)
         self.obs_gerais.pack(fill="both", expand=True, pady=5)
+        _vincular_maiusculas_texto(self.obs_gerais)
 
         tk.Label(left, text="Observações técnicas:").pack(anchor="w")
         self.obs_tecnico_text = tk.Text(left, height=3)
         self.obs_tecnico_text.pack(fill="both", expand=True, pady=5)
+        _vincular_maiusculas_texto(self.obs_tecnico_text)
 
         right = tk.Frame(conteudo)
         right.pack(side="right", fill="both", expand=True, padx=10)
@@ -505,6 +615,7 @@ class OrdemServicoApp:
         tk.Label(right, text="Defeito / Reclamação:").pack(anchor="w")
         self.defeito_text = tk.Text(right, height=12, bg="#fafafa")
         self.defeito_text.pack(fill="both", expand=True, pady=5)
+        _vincular_maiusculas_texto(self.defeito_text)
 
         valores_frame = tk.Frame(frame)
         valores_frame.pack(side="bottom", fill="x", padx=15, pady=10)
@@ -554,15 +665,16 @@ class OrdemServicoApp:
     def cadastrar_novo_cliente(self):
         win = tk.Toplevel(self.root)
         win.title("Cadastrar Novo Cliente")
-        win.geometry("500x450")
+        win.geometry("500x500")
 
         entries = {}
-        campos = ["Nome", "CPF", "Telefone", "Email", "CEP"]
+        campos = ["Nome", "CPF / CNPJ", "Telefone", "Email", "CEP"]
 
         for campo in campos:
             tk.Label(win, text=campo + ":").pack(pady=5)
             entries[campo] = tk.Entry(win, width=50)
             entries[campo].pack()
+            _vincular_maiusculas_entry(entries[campo])
 
         def salvar_cliente():
             cep = entries["CEP"].get().strip()
@@ -574,17 +686,37 @@ class OrdemServicoApp:
                 except Exception:
                     pass
 
+            # Separar CPF e CNPJ baseado no número de dígitos
+            cpf_cnpj = _maiusc(entries["CPF / CNPJ"].get())
+            cpf = ""
+            cnpj = ""
+            
+            # Remove caracteres não numéricos para contar
+            apenas_numeros = ''.join(ch for ch in cpf_cnpj if ch.isdigit())
+            
+            if len(apenas_numeros) == 11:
+                cpf = cpf_cnpj
+            elif len(apenas_numeros) == 14:
+                cnpj = cpf_cnpj
+            elif len(apenas_numeros) > 0:
+                # Se não é nem 11 nem 14, coloca em CPF por padrão
+                cpf = cpf_cnpj
+
             novo = {
                 "id": len(self.clientes) + 1,
-                "nome": entries["Nome"].get(),
-                "cpf": entries["CPF"].get(),
-                "telefone": entries["Telefone"].get(),
-                "email": entries["Email"].get(),
-                "endereco": endereco
+                "nome": _maiusc(entries["Nome"].get()),
+                "cpf": cpf,
+                "cnpj": cnpj,
+                "telefone": _maiusc(entries["Telefone"].get()),
+                "email": _maiusc(entries["Email"].get()),
+                "endereco": {
+                    chave: (_maiusc(valor) if isinstance(valor, str) else valor)
+                    for chave, valor in (endereco or {}).items()
+                },
             }
 
             self.clientes.append(novo)
-            self.salvar_dados(ARQUIVO_CLIENTES, self.clientes)
+            self.db.salvar_clientes(self.clientes)
             messagebox.showinfo("Sucesso", "Cliente cadastrado!", parent=win)
             win.destroy()
             self.combo_cliente["values"] = [c.get("nome", "") for c in self.clientes]
@@ -601,17 +733,20 @@ class OrdemServicoApp:
         tk.Label(win, text="Nome do Técnico:").pack(pady=5)
         nome = tk.Entry(win, width=40)
         nome.pack()
+        _vincular_maiusculas_entry(nome)
 
         tk.Label(win, text="Telefone:").pack(pady=5)
         telefone = tk.Entry(win, width=40)
         telefone.pack()
+        _vincular_maiusculas_entry(telefone)
 
         tk.Label(win, text="Especialidade:").pack(pady=5)
         especialidade = tk.Entry(win, width=40)
         especialidade.pack()
+        _vincular_maiusculas_entry(especialidade)
 
         def salvar():
-            nome_tecnico = nome.get().strip()
+            nome_tecnico = _maiusc(nome.get().strip())
             if not nome_tecnico:
                 messagebox.showwarning("Aviso", "Digite o nome do técnico.", parent=win)
                 return
@@ -619,12 +754,12 @@ class OrdemServicoApp:
             tecnico = {
                 "id": len(self.tecnicos) + 1,
                 "nome": nome_tecnico,
-                "telefone": telefone.get().strip(),
-                "especialidade": especialidade.get().strip()
+                "telefone": _maiusc(telefone.get().strip()),
+                "especialidade": _maiusc(especialidade.get().strip())
             }
 
             self.tecnicos.append(tecnico)
-            self.salvar_tecnicos()
+            self.db.salvar_tecnicos(self.tecnicos)
             self.tecnico_entry.delete(0, tk.END)
             self.tecnico_entry.insert(0, tecnico["nome"])
             win.destroy()
@@ -637,9 +772,10 @@ class OrdemServicoApp:
 
         if cliente:
             self.os_atual["cliente"] = cliente
+            cpf_cnpj_valor = cliente.get('cpf', '') or cliente.get('cnpj', '')
             info = (
                 f"Nome: {cliente.get('nome', '')}\n"
-                f"CPF: {cliente.get('cpf', '')}\n"
+                f"CPF/CNPJ: {cpf_cnpj_valor}\n"
                 f"Telefone: {cliente.get('telefone', '')}\n"
                 f"Email: {cliente.get('email', '')}\n"
             )
@@ -654,17 +790,6 @@ class OrdemServicoApp:
             self.info_cliente.delete("1.0", tk.END)
             self.info_cliente.insert("1.0", info)
             self.atualizar_resumo_os()
-
-    def carregar_tecnicos(self):
-        try:
-            with open("tecnicos.json", "r", encoding="utf-8") as arquivo:
-                return json.load(arquivo)
-        except:
-            return []
-
-    def salvar_tecnicos(self):
-        with open("tecnicos.json", "w", encoding="utf-8") as arquivo:
-            json.dump(self.tecnicos, arquivo, indent=4, ensure_ascii=False)
 
     def buscar_os(self):
         win = tk.Toplevel(self.root)
@@ -694,13 +819,13 @@ class OrdemServicoApp:
         self.entry_os.grid(row=1, column=0, padx=10)
         tk.Button(frame_busca, text="Buscar O.S.", width=15, command=self.filtrar_os_numero).grid(row=1, column=1, padx=10)
 
-        tk.Label(frame_busca, text="CPF").grid(row=0, column=2, padx=10)
+        tk.Label(frame_busca, text="CPF/CNPJ").grid(row=0, column=2, padx=10)
         self.entry_cpf = tk.Entry(frame_busca, width=20)
         self.entry_cpf.grid(row=1, column=2, padx=10)
-        tk.Button(frame_busca, text="Buscar CPF", width=15, command=self.filtrar_os_cpf).grid(row=1, column=3, padx=10)
+        tk.Button(frame_busca, text="Buscar CPF/CNPJ", width=15, command=self.filtrar_os_cpf).grid(row=1, column=3, padx=10)
         self.entry_cpf.bind("<Return>", lambda e: self.filtrar_os_cpf())
 
-        tk.Label(frame_busca, text="Buscar geral (cliente, CPF, equipamento, defeito, situação)").grid(row=0, column=4, padx=10, columnspan=3)
+        tk.Label(frame_busca, text="Buscar geral (cliente, CPF/CNPJ, equipamento, defeito, situação)").grid(row=0, column=4, padx=10, columnspan=3)
         self.entry_busca_geral = tk.Entry(frame_busca, width=45)
         self.entry_busca_geral.grid(row=1, column=4, padx=10, columnspan=2)
         tk.Button(frame_busca, text="Buscar Geral", width=15, command=self.filtrar_os_geral).grid(row=1, column=6, padx=10)
@@ -745,23 +870,24 @@ class OrdemServicoApp:
         self.atualizar_detalhes_os()
 
     def filtrar_os_cpf(self):
-        cpf_busca = self.entry_cpf.get().replace(".", "").replace("-", "").strip()
-        if len(cpf_busca) != 11 or not cpf_busca.isdigit():
-            messagebox.showwarning("Aviso", "CPF incompleto ou incorreto.\nDigite novamente.", parent=self.root)
+        cpf_cnpj_busca = self.entry_cpf.get().replace(".", "").replace("-", "").replace("/", "").strip()
+        if not cpf_cnpj_busca.isdigit() or (len(cpf_cnpj_busca) != 11 and len(cpf_cnpj_busca) != 14):
+            messagebox.showwarning("Aviso", "CPF ou CNPJ incompleto ou incorreto.\nDigite novamente.", parent=self.root)
             return
 
         self.listbox_os.delete(0, tk.END)
         resultados = []
         for os_item in self.ordens:
             cliente = os_item.get("cliente", {}) or {}
-            cpf = str(cliente.get("cpf", "")).replace(".", "").replace("-", "").strip()
-            if cpf == cpf_busca:
+            cpf = (cliente.get("cpf", "") or "").replace(".", "").replace("-", "").replace("/", "").strip()
+            cnpj = (cliente.get("cnpj", "") or "").replace(".", "").replace("-", "").replace("/", "").strip()
+            if cpf == cpf_cnpj_busca or cnpj == cpf_cnpj_busca:
                 resultados.append(os_item)
 
         for os_item in sorted(resultados, key=lambda x: x["id"], reverse=True):
             self.listbox_os.insert(tk.END, formatar_os_para_lista(os_item))
         if not resultados:
-            messagebox.showwarning("Aviso", "CPF não encontrado.", parent=self.root)
+            messagebox.showwarning("Aviso", "CPF/CNPJ não encontrado.", parent=self.root)
         self.atualizar_detalhes_os()
 
     def filtrar_os_geral(self):
@@ -879,15 +1005,15 @@ class OrdemServicoApp:
         self.calcular_total()
 
     def gravar_os(self):
-        self.os_atual["equipamento"] = {k: v.get() for k, v in self.equipamento_entries.items()}
-        self.os_atual["acessorios"] = self.acessorios_text.get("1.0", tk.END).strip()
-        self.os_atual["defeito"] = self.defeito_text.get("1.0", tk.END).strip()
-        self.os_atual["obs_gerais"] = self.obs_gerais.get("1.0", tk.END).strip()
-        self.os_atual["obs_tecnico"] = self.obs_tecnico_text.get("1.0", tk.END).strip()
+        self.os_atual["equipamento"] = {k: _maiusc(v.get()) for k, v in self.equipamento_entries.items()}
+        self.os_atual["acessorios"] = _maiusc(self.acessorios_text.get("1.0", tk.END).strip())
+        self.os_atual["defeito"] = _maiusc(self.defeito_text.get("1.0", tk.END).strip())
+        self.os_atual["obs_gerais"] = _maiusc(self.obs_gerais.get("1.0", tk.END).strip())
+        self.os_atual["obs_tecnico"] = _maiusc(self.obs_tecnico_text.get("1.0", tk.END).strip())
         self.os_atual["data_entrada"] = self.os_atual.get("data_entrada", "") or datetime.now().strftime("%d/%m/%Y %H:%M")
         self.os_atual["situacao"] = self.situacao_var.get()
 
-        tecnico_nome = self.tecnico_entry.get().strip()
+        tecnico_nome = _maiusc(self.tecnico_entry.get().strip())
         tecnico = next((t for t in self.tecnicos if t["nome"] == tecnico_nome), None)
         if tecnico:
             self.os_atual["tecnico"] = tecnico
@@ -905,7 +1031,7 @@ class OrdemServicoApp:
         else:
             self.ordens.append(self.os_atual)
         
-        if self.salvar_dados(ARQUIVO_OS, self.ordens):
+        if self.db.salvar_ordens(self.ordens):
             self.atualizar_resumo_os()
             # Mantém a lista da tela inicial sincronizada com a O.S. recém-gravada,
             # respeitando eventual busca em andamento.
@@ -949,7 +1075,9 @@ class OrdemServicoApp:
             from reportlab.lib.units import cm
             from reportlab.lib import colors
             
-            filename = f"OS_{self.os_atual['id']:06d}.pdf"
+            pasta_documentos = obter_pasta_documentos()
+            os.makedirs(pasta_documentos, exist_ok=True)
+            filename = os.path.join(pasta_documentos, f"OS_{self.os_atual['id']:06d}.pdf")
             doc = SimpleDocTemplate(filename, pagesize=A4, rightMargin=1*cm, leftMargin=1*cm, topMargin=0.8*cm, bottomMargin=0.8*cm)
             styles = getSampleStyleSheet()
             story = []
@@ -996,11 +1124,12 @@ class OrdemServicoApp:
                 bairro = '-'
                 cidade = '-'
             
+            cpf_cnpj_val = cliente.get('cpf') or cliente.get('cnpj') or '-'
             info_cliente_data = [
                 ['Cliente', cliente.get('nome', '-'), 'Contato', cliente.get('telefone', '-')],
                 ['Endereço', endereco_completo, 'CEP', cep],
                 ['Bairro', bairro, 'Cidade', cidade],
-                ['CPF/CNPJ', cliente.get('cpf', '-'), 'Email', cliente.get('email', '-')],
+                ['CPF/CNPJ', cpf_cnpj_val, 'Email', cliente.get('email', '-')],
             ]
             
             info_table = Table(info_cliente_data, colWidths=[2.3*cm, 6.2*cm, 2.3*cm, 6.2*cm])
@@ -1156,6 +1285,47 @@ class OrdemServicoApp:
                 ('BOTTOMPADDING', (0, 1), (-1, 1), 3),
             ]))
             story.append(assinatura_table)
+            
+            # ===== TERMO DE COMPROVANTE DE ENTRADA =====
+            story.append(Spacer(1, 0.4*cm))
+            termo_titulo = Paragraph("<b>COMPROVANTE DE ENTRADA DO EQUIPAMENTO</b>", styles['Normal'])
+            story.append(termo_titulo)
+            story.append(Spacer(1, 0.2*cm))
+            
+            termo_texto = """
+<b>PREZADO(A) CLIENTE,</b><br/><br/>
+Guarde este comprovante de entrada, pois ele é necessário para a retirada do equipamento. 
+Sua apresentação garante a segurança na identificação. Na ausência, a retirada poderá ocorrer 
+mediante validação da identidade do responsável, conforme procedimentos internos.<br/><br/>
+
+<b>Responsabilidade sobre dados:</b> O cliente declara estar ciente de que, durante a execução dos serviços, 
+poderá ocorrer perda parcial ou total de dados. É de sua responsabilidade realizar backup prévio. 
+A empresa não se responsabiliza pela perda, recuperação ou integridade de dados, salvo em caso de 
+dolo ou culpa grave, conforme legislação vigente.<br/><br/>
+
+<b>Prazo para retirada:</b> Conforme art. 592 do Código Civil e orientações do Procon, equipamentos não 
+retirados em até 90 (noventa) dias poderão ser considerados abandonados, podendo ser destinados à 
+compensação de custos com armazenamento e serviços, mediante tentativa prévia de contato.<br/><br/>
+
+<b>Garantia:</b> Não cobre danos por mau uso, quedas, instalações inadequadas, variações elétricas 
+ou intervenções de terceiros não autorizados.
+            """
+            
+            termo_paragraph = Paragraph(termo_texto, styles['Normal'])
+            termo_box_data = [[termo_paragraph]]
+            termo_box = Table(termo_box_data, colWidths=[16.5*cm])
+            termo_box.setStyle(TableStyle([
+                ('FONTSIZE', (0, 0), (-1, -1), 7),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#BDC3C7')),
+                ('TOPPADDING', (0, 0), (-1, -1), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                ('LEFTPADDING', (0, 0), (-1, -1), 8),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F5F5F5')),
+            ]))
+            story.append(termo_box)
             
             doc.build(story)
             messagebox.showinfo("PDF Gerado", f"Arquivo salvo como: {filename}")
